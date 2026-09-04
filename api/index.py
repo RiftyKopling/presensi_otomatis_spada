@@ -19,6 +19,11 @@ WIB = timezone(timedelta(hours=7))
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+USERNAME_1 = os.environ["USERNAME_1"] # Akun Rifty
+PASSWORD_1 = os.environ["PASSWORD_1"]
+USERNAME_2 = os.environ["USERNAME_2"] # Akun Hisyam
+PASSWORD_2 = os.environ["PASSWORD_2"]
+
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TELEGRAM_FILE_API = f"https://api.telegram.org/file/bot{BOT_TOKEN}"
 
@@ -72,8 +77,8 @@ def home():
 # Data Jadwal Kuliah
 users = [
     {
-        "username": "123240093",
-        "password": "Muhammad@2005",
+        "username": USERNAME_1,
+        "password": PASSWORD_1,
         "jadwal": [
             {
                 "mata_kuliah": "Sistem Operasi",
@@ -153,10 +158,86 @@ users = [
                 "menit": 30
             }
         ]
+    },
+    {
+        "username": USERNAME_2,
+        "password": PASSWORD_2,
+        "jadwal": [ 
+            {
+            "mata_kuliah": "Kriptografi",
+            "id": 801568,
+            "hari": 1,
+            "jam": 7,
+            "menit": 30
+            },
+            {
+            "mata_kuliah": "Praktikum Internet of Things (IoT)",
+            "id": 818499,
+            "hari": 1,
+            "jam": 10,
+            "menit": 30
+            },
+            {
+            "mata_kuliah": "Sistem Operasi",
+            "id": 812101,
+            "hari": 2,
+            "jam": 10,
+            "menit": 0
+            },
+            {
+            "mata_kuliah": "Pembelajaran Mesin",
+            "id": 809914,
+            "hari": 4,
+            "jam": 7,
+            "menit": 30
+            },
+            {
+            "mata_kuliah": "Praktikum Data Science",
+            "id": 817796,
+            "hari": 4,
+            "jam": 13,
+            "menit": 0
+            },
+            {
+            "mata_kuliah": "Manajemen Proyek Perangkat Lunak",
+            "id": 808322,
+            "hari": 4,
+            "jam": 15,
+            "menit": 0
+            },
+            {
+            "mata_kuliah": "Data Science",
+            "id": 811113,
+            "hari": 5,
+            "jam": 7,
+            "menit": 30
+            },
+            {
+            "mata_kuliah": "Internet of Things (IoT)",
+            "id": 808954,
+            "hari": 5,
+            "jam": 10,
+            "menit": 0
+            },
+            {
+            "mata_kuliah": "Penginderaan Jarak Jauh",
+            "id": 811820,
+            "hari": 5,
+            "jam": 15,
+            "menit": 30
+            },
+            {
+            "mata_kuliah": "Kapita Selekta",
+            "id": 808956,
+            "hari": 6,
+            "jam": 7,
+            "menit": 30
+            }
+        ]
     }
 ]
 
-def jalankan_bot_presensi(username, password, id_modul_presensi):
+def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, username_label):
     try:
         logger.info('{"event":"presensi_start"}')
         
@@ -174,6 +255,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         token_element = soup_login.find('input', {'name': 'logintoken'})
         if not token_element:
             logger.error('{"error":"logintoken tidak ditemukan"}')
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Logintoken tidak ditemukan")
             return
         
         login_token = token_element.get('value')
@@ -193,6 +275,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         
         if "login" in response_post.url:
             logger.error('{"error":"login ditolak, cek username/password"}')
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Login gagal (cek username/password)")
             return
         logger.info('{"step":2,"msg":"login berhasil"}')
 
@@ -209,6 +292,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
             logger.info('{"step":3,"msg":"sesskey didapat","sesskey":%s}', json.dumps(sesskey))
         else:
             logger.error('{"error":"sesskey tidak ditemukan di dashboard"}')
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Sesskey tidak ditemukan di dashboard")
             return
 
         # ==============================================================
@@ -226,6 +310,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         
         if not link_eksekusi:
             logger.error('{"error":"tombol ajukan presensi tidak ditemukan"}')
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Tombol ajukan presensi tidak ditemukan (belum buka/jadwal salah)")
             return
             
         url_form_presensi = link_eksekusi['href']
@@ -248,6 +333,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         
         if not radio_hadir:
             logger.error('{"error":"opsi status kehadiran tidak ditemukan"}')
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Opsi status kehadiran tidak ditemukan")
             return
             
         status_id = radio_hadir.get('value')
@@ -270,11 +356,13 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         # Validasi Hasil Akhir
         if response_akhir.status_code == 200 or len(response_akhir.history) > 0:
             logger.info('{"event":"presensi_sukses"}')
+            tg_log(f"✅ [{username_label}] {mata_kuliah} - Presensi berhasil")
         else:
             logger.error('{"event":"presensi_gagal","status_code":%d}', response_akhir.status_code)
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Submit gagal (status: {response_akhir.status_code})")
     except Exception as e:
         logger.exception('{"event":"presensi_error","error":%s}', json.dumps(str(e)))
-        tg_log(f"❌ Presensi error: {e}")
+        tg_log(f"⚠️ [{username_label}] {mata_kuliah} - Error: {e}")
         raise
 
 def presensi_otomatis():
@@ -289,14 +377,14 @@ def presensi_otomatis():
                 selisih = (sekarang - target).total_seconds() / 60 
                 # jika masih dalam selisih jalankan presensi
                 if 0 <= selisih <= 15:
-                    jalankan_bot_presensi(u['username'], u['password'], jadwal['id'])
+                    label = "Rifty" if u['username'] == USERNAME_1 else "Hisyam"
+                    jalankan_bot_presensi(u['username'], u['password'], jadwal['id'], jadwal['mata_kuliah'], label)
                 elif selisih < 0:
                     logger.info('{"event":"not_time_yet","mata_kuliah":%s}', json.dumps(jadwal['mata_kuliah']))
                 else:
                     logger.info('{"event":"past_time","mata_kuliah":%s}', json.dumps(jadwal['mata_kuliah']))
             else:
                 logger.info('{"event":"no_schedule_today","hari":%d}', sekarang.weekday())
-
 
 def run_presensi_with_logging():
     """Wrapper untuk background task dengan logging lengkap."""
