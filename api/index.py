@@ -285,7 +285,7 @@ def presensi_otomatis():
             # mencari jadwal yang sama harinya dengan hari ini
             if sekarang.weekday() == jadwal['hari']:
                 # mencari selisih menit antara jadwal dan sekarang
-                target = date(sekarang.year, sekarang.month, sekarang.day, jadwal['jam'], jadwal['menit'])
+                target = date(sekarang.year, sekarang.month, sekarang.day, jadwal['jam'], jadwal['menit'], tzinfo=WIB)
                 selisih = (sekarang - target).total_seconds() / 60 
                 # jika masih dalam selisih jalankan presensi
                 if 0 <= selisih <= 1500:
