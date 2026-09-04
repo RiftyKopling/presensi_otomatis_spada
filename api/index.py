@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 from datetime import datetime as date
+from datetime import timezone, timedelta
 import os
 import logging
 import json
@@ -14,6 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI()
 
+WIB = timezone(timedelta(hours=7))
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
@@ -276,7 +278,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi):
         raise
 
 def presensi_otomatis():
-    sekarang = date.now()
+    sekarang = date.now(WIB)
 
     for u in users:
         for jadwal in u['jadwal']:
