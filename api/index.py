@@ -288,7 +288,7 @@ def presensi_otomatis():
                 target = date(sekarang.year, sekarang.month, sekarang.day, jadwal['jam'], jadwal['menit'], tzinfo=WIB)
                 selisih = (sekarang - target).total_seconds() / 60 
                 # jika masih dalam selisih jalankan presensi
-                if 0 <= selisih <= 1500:
+                if 0 <= selisih <= 15:
                     jalankan_bot_presensi(u['username'], u['password'], jadwal['id'])
                 elif selisih < 0:
                     logger.info('{"event":"not_time_yet","mata_kuliah":%s}', json.dumps(jadwal['mata_kuliah']))
