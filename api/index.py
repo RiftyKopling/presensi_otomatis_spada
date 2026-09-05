@@ -8,7 +8,7 @@ import logging
 import json
 import time
 
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI
 
 # Menyembunyikan peringatan keamanan SSL karena kita menggunakan verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -16,6 +16,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = FastAPI()
 
 WIB = timezone(timedelta(hours=7))
+sekarang = date.now(WIB)
+istirahat = 16
+bangun = 7
+
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
@@ -35,7 +39,7 @@ HTTP_TIMEOUT = 8
 # Logging configuration
 LOG_LEVEL = "INFO"
 TG_LOG_ENABLED = True
-TG_LOG_MIN_INTERVAL = 5.0
+TG_LOG_MIN_INTERVAL = 1.0
 
 # Rate-limited Telegram log sender
 _last_tg_log = 0.0
@@ -166,70 +170,70 @@ users = [
             {
             "mata_kuliah": "Kriptografi",
             "id": 801568,
-            "hari": 1,
+            "hari": 0,
             "jam": 7,
             "menit": 30
             },
             {
             "mata_kuliah": "Praktikum Internet of Things (IoT)",
             "id": 818499,
-            "hari": 1,
+            "hari": 0,
             "jam": 10,
             "menit": 30
             },
             {
             "mata_kuliah": "Sistem Operasi",
             "id": 812101,
-            "hari": 2,
+            "hari": 1,
             "jam": 10,
             "menit": 0
             },
             {
             "mata_kuliah": "Pembelajaran Mesin",
             "id": 809914,
-            "hari": 4,
+            "hari": 3,
             "jam": 7,
             "menit": 30
             },
             {
             "mata_kuliah": "Praktikum Data Science",
             "id": 817796,
-            "hari": 4,
+            "hari": 3,
             "jam": 13,
             "menit": 0
             },
             {
             "mata_kuliah": "Manajemen Proyek Perangkat Lunak",
             "id": 808322,
-            "hari": 4,
+            "hari": 3,
             "jam": 15,
             "menit": 0
             },
             {
             "mata_kuliah": "Data Science",
             "id": 811113,
-            "hari": 5,
+            "hari": 4,
             "jam": 7,
             "menit": 30
             },
             {
             "mata_kuliah": "Internet of Things (IoT)",
             "id": 808954,
-            "hari": 5,
+            "hari": 4,
             "jam": 10,
             "menit": 0
             },
             {
             "mata_kuliah": "Penginderaan Jarak Jauh",
             "id": 811820,
-            "hari": 5,
+            "hari": 4,
             "jam": 15,
             "menit": 30
             },
             {
             "mata_kuliah": "Kapita Selekta",
             "id": 808956,
-            "hari": 6,
+            "hari": 5,
             "jam": 7,
             "menit": 30
             }
@@ -366,7 +370,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         raise
 
 def presensi_otomatis():
-    sekarang = date.now(WIB)
+    
 
     for u in users:
         for jadwal in u['jadwal']:
@@ -387,19 +391,24 @@ def presensi_otomatis():
                 logger.info('{"event":"no_schedule_today","hari":%d}', sekarang.weekday())
 
 def run_presensi_with_logging():
-    """Wrapper untuk background task dengan logging lengkap."""
-    logger.info('{"event":"presensi_triggered","source":"HEAD /api/ping"}')
-    tg_log("🔔 Presensi triggered via HEAD /api/ping")
-    try:
-        presensi_otomatis()
-        logger.info('{"event":"presensi_completed"}')
-        tg_log("✅ Presensi cycle completed")
-    except Exception as e:
-        logger.exception('{"event":"presensi_failed","error":%s}', json.dumps(str(e)))
-        tg_log(f"❌ Presensi error: {e}")
+    if sekarang.hour > 7 and sekarang.hour < 16 and sekarang.weekday() != 6:
+        """Wrapper untuk background task dengan logging lengkap."""
+        logger.info('{"event":"presensi_triggered","source":"HEAD /api/ping"}')
+        tg_log("🔔 Presensi triggered via HEAD /api/ping")
+        try:
+            presensi_otomatis()
+            logger.info('{"event":"presensi_completed"}')
+            tg_log("✅ Presensi cycle completed")
+        except Exception as e:
+            logger.exception('{"event":"presensi_failed","error":%s}', json.dumps(str(e)))
+            tg_log(f"❌ Presensi error: {e}")
+    else:
+        # libur presensinya blok
+        logger.info('{"event":"Libur"}')
 
+    
 
 @app.head("/api/ping")
-def ping_head(background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_presensi_with_logging)
+def ping_head():
+    run_presensi_with_logging()
     return {"status": "ok"}
