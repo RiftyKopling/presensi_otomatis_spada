@@ -422,6 +422,11 @@ def presensi_otomatis():
                 logger.info('{"event":"no_schedule_today","hari":%d}', sekarang.weekday())
 
 def run_presensi_with_logging():
+    # Reset rate-limit timer setiap invocation agar tidak terblokir oleh sisa timer lama
+    global _last_tg_log_system, _last_tg_log_user
+    _last_tg_log_system = time.time()
+    _last_tg_log_user = time.time()
+
     if sekarang.hour > 7 and sekarang.hour < 16 and sekarang.weekday() != 6:
         """Wrapper untuk background task dengan logging lengkap."""
         logger.info('{"event":"presensi_triggered","source":"HEAD /api/ping"}')
