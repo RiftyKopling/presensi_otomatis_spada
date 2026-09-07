@@ -1,5 +1,5 @@
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import urllib3
 from datetime import datetime as date
 from datetime import timezone, timedelta
@@ -7,6 +7,7 @@ import os
 import logging
 import json
 import time
+from typing import cast
 
 from fastapi import FastAPI
 
@@ -39,18 +40,31 @@ HTTP_TIMEOUT = 8
 # Logging configuration
 LOG_LEVEL = "INFO"
 TG_LOG_ENABLED = True
-TG_LOG_MIN_INTERVAL = 1.0
+TG_LOG_MIN_INTERVAL_SYSTEM = 0.1
+TG_LOG_MIN_INTERVAL_USER = 1.0
 
-# Rate-limited Telegram log sender
-_last_tg_log = 0.0
+# Rate-limited Telegram log sender (separate buckets per category)
+_last_tg_log_system = 0.0
+_last_tg_log_user = 0.0
 
-def tg_log(text: str):
-    """Send log to Telegram with rate limiting (silent fail)."""
-    global _last_tg_log
+def tg_log(text: str, category: str = "user"):
+    """Send log to Telegram with per-category rate limiting.
+    
+    category:
+      - "system": triggered/completed/error (interval ~0.1s)
+      - "user":   per-presensi notifications (interval ~1s)
+    """
+    global _last_tg_log_system, _last_tg_log_user
     if not TG_LOG_ENABLED:
         return
+    if category == "system":
+        last_log = _last_tg_log_system
+        min_interval = TG_LOG_MIN_INTERVAL_SYSTEM
+    else:
+        last_log = _last_tg_log_user
+        min_interval = TG_LOG_MIN_INTERVAL_USER
     now = time.time()
-    if now - _last_tg_log < TG_LOG_MIN_INTERVAL:
+    if now - last_log < min_interval:
         return
     try:
         requests.post(
@@ -58,9 +72,12 @@ def tg_log(text: str):
             data={"chat_id": CHAT_ID, "text": text[:4000]},
             timeout=HTTP_TIMEOUT
         )
-        _last_tg_log = now
-    except Exception:
-        pass
+        if category == "system":
+            _last_tg_log_system = now
+        else:
+            _last_tg_log_user = now
+    except Exception as e:
+        logger.warning('{"event":"tg_log_failed","error":%s}', json.dumps(str(e)))
 
 # JSON logger setup for Vercel
 logging.basicConfig(
@@ -257,9 +274,9 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         soup_login = BeautifulSoup(response_get.text, 'html.parser')
         
         token_element = soup_login.find('input', {'name': 'logintoken'})
-        if not token_element:
+        if not token_element or not isinstance(token_element, Tag):
             logger.error('{"error":"logintoken tidak ditemukan"}')
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Logintoken tidak ditemukan")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Logintoken tidak ditemukan", category="user")
             return
         
         login_token = token_element.get('value')
@@ -279,7 +296,7 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         
         if "login" in response_post.url:
             logger.error('{"error":"login ditolak, cek username/password"}')
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Login gagal (cek username/password)")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Login gagal (cek username/password)", category="user")
             return
         logger.info('{"step":2,"msg":"login berhasil"}')
 
@@ -290,13 +307,20 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         soup_dash = BeautifulSoup(response_post.text, 'html.parser')
         
         # Mencari sesskey dari URL logout (Pola umum Moodle)
-        logout_link = soup_dash.find('a', href=lambda href: href and "logout.php?sesskey=" in href)
+        logout_link = None
+        for a in soup_dash.find_all('a', href=True):
+            if isinstance(a, Tag):
+                href = a.get('href') or ''
+                if "logout.php?sesskey=" in href:
+                    logout_link = a
+                    break
         if logout_link:
-            sesskey = logout_link['href'].split('sesskey=')[1]
+            href_val = cast(str, logout_link.get('href', ''))
+            sesskey = href_val.split('sesskey=')[1]
             logger.info('{"step":3,"msg":"sesskey didapat","sesskey":%s}', json.dumps(sesskey))
         else:
             logger.error('{"error":"sesskey tidak ditemukan di dashboard"}')
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Sesskey tidak ditemukan di dashboard")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Sesskey tidak ditemukan di dashboard", category="user")
             return
 
         # ==============================================================
@@ -310,16 +334,23 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         soup_view = BeautifulSoup(response_view.text, 'html.parser')
         
         # Mencari tombol "Ajukan Presensi" yang mengandung sessid hari ini
-        link_eksekusi = soup_view.find('a', href=lambda href: href and "attendance.php?sessid=" in href)
-        
+        link_eksekusi = None
+        for a in soup_view.find_all('a', href=True):
+            if isinstance(a, Tag):
+                href = a.get('href') or ''
+                if "attendance.php?sessid=" in href:
+                    link_eksekusi = a
+                    break
+
         if not link_eksekusi:
             logger.error('{"error":"tombol ajukan presensi tidak ditemukan"}')
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Tombol ajukan presensi tidak ditemukan (belum buka/jadwal salah)")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Tombol ajukan presensi tidak ditemukan (belum buka/jadwal salah)", category="user")
             return
-            
-        url_form_presensi = link_eksekusi['href']
+        
+        href_val = cast(str, link_eksekusi.get('href', ''))
+        url_form_presensi = href_val
         # Parsing ID sesi (sessid) dari URL
-        sessid_hari_ini = url_form_presensi.split('sessid=')[1].split('&')[0]
+        sessid_hari_ini = href_val.split('sessid=')[1].split('&')[0]
         logger.info('{"step":4,"msg":"jadwal aktif","sessid":%s}', json.dumps(sessid_hari_ini))
 
         # ==============================================================
@@ -335,9 +366,9 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         # (Di Moodle, opsi pertama biasanya adalah "Hadir" / "Present")
         radio_hadir = soup_form.find('input', {'type': 'radio', 'name': 'status'})
         
-        if not radio_hadir:
+        if not radio_hadir or not isinstance(radio_hadir, Tag):
             logger.error('{"error":"opsi status kehadiran tidak ditemukan"}')
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Opsi status kehadiran tidak ditemukan")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Opsi status kehadiran tidak ditemukan", category="user")
             return
             
         status_id = radio_hadir.get('value')
@@ -360,13 +391,13 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         # Validasi Hasil Akhir
         if response_akhir.status_code == 200 or len(response_akhir.history) > 0:
             logger.info('{"event":"presensi_sukses"}')
-            tg_log(f"✅ [{username_label}] {mata_kuliah} - Presensi berhasil")
+            tg_log(f"✅ [{username_label}] {mata_kuliah} - Presensi berhasil", category="user")
         else:
             logger.error('{"event":"presensi_gagal","status_code":%d}', response_akhir.status_code)
-            tg_log(f"❌ [{username_label}] {mata_kuliah} - Submit gagal (status: {response_akhir.status_code})")
+            tg_log(f"❌ [{username_label}] {mata_kuliah} - Submit gagal (status: {response_akhir.status_code})", category="user")
     except Exception as e:
         logger.exception('{"event":"presensi_error","error":%s}', json.dumps(str(e)))
-        tg_log(f"⚠️ [{username_label}] {mata_kuliah} - Error: {e}")
+        tg_log(f"⚠️ [{username_label}] {mata_kuliah} - Error: {e}", category="user")
         raise
 
 def presensi_otomatis():
@@ -394,14 +425,14 @@ def run_presensi_with_logging():
     if sekarang.hour > 7 and sekarang.hour < 16 and sekarang.weekday() != 6:
         """Wrapper untuk background task dengan logging lengkap."""
         logger.info('{"event":"presensi_triggered","source":"HEAD /api/ping"}')
-        tg_log("🔔 Presensi triggered via HEAD /api/ping")
+        tg_log("🔔 Presensi triggered via HEAD /api/ping", category="system")
         try:
             presensi_otomatis()
             logger.info('{"event":"presensi_completed"}')
-            tg_log("✅ Presensi cycle completed")
+            tg_log("✅ Presensi cycle completed", category="system")
         except Exception as e:
             logger.exception('{"event":"presensi_failed","error":%s}', json.dumps(str(e)))
-            tg_log(f"❌ Presensi error: {e}")
+            tg_log(f"❌ Presensi error: {e}", category="system")
     else:
         # libur presensinya blok
         logger.info('{"event":"Libur"}')
