@@ -17,9 +17,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = FastAPI()
 
 WIB = timezone(timedelta(hours=7))
-sekarang = date.now(WIB)
-istirahat = 16
-bangun = 7
+# 'sekarang' (waktu saat ini) tidak lagi dihitung di level modul.
+# Sebelumnya dihitung sekali saat modul di-import (cold start), sehingga
+# nilainya beku dan tidak mengikuti waktu request sebenarnya di Vercel.
+# Sekarang dihitung di dalam handler request agar selalu fresh.
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -400,8 +401,13 @@ def jalankan_bot_presensi(username, password, id_modul_presensi, mata_kuliah, us
         tg_log(f"⚠️ [{username_label}] {mata_kuliah} - Error: {e}", category="user")
         raise
 
-def presensi_otomatis():
+def presensi_otomatis(sekarang):
+    """Jalankan presensi otomatis untuk jadwal hari ini.
     
+    Args:
+        sekarang: datetime.now(WIB) yang dihitung fresh di handler request,
+                  bukan di level modul (supaya tidak beku di cold start Vercel).
+    """
 
     for u in users:
         for jadwal in u['jadwal']:
@@ -422,17 +428,19 @@ def presensi_otomatis():
                 logger.info('{"event":"no_schedule_today","hari":%d}', sekarang.weekday())
 
 def run_presensi_with_logging():
+    # Hitung waktu sekarang pada setiap request (fresh), bukan pada import module
+    sekarang = date.now(WIB)
     # Reset rate-limit timer setiap invocation agar tidak terblokir oleh sisa timer lama
     global _last_tg_log_system, _last_tg_log_user
     _last_tg_log_system = 0.0
     _last_tg_log_user = 0.0
 
-    if sekarang.hour > 7 and sekarang.hour < 16 and sekarang.weekday() != 6:
+    if sekarang.hour > 6 and sekarang.hour < 16 and sekarang.weekday() != 6:
         """Wrapper untuk background task dengan logging lengkap."""
         logger.info('{"event":"presensi_triggered","source":"HEAD /api/ping"}')
         tg_log("🔔 Presensi triggered via HEAD /api/ping", category="system")
         try:
-            presensi_otomatis()
+            presensi_otomatis(sekarang)
             logger.info('{"event":"presensi_completed"}')
             tg_log("✅ Presensi cycle completed", category="system")
         except Exception as e:
